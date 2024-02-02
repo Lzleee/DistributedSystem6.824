@@ -24,6 +24,18 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type StateArgs struct {
+	ID int
+	State int
+}
+
+type StateReply struct {
+	NReduce int
+	File string
+	FileID int
+	Category int
+	WorkerID int
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the coordinator.

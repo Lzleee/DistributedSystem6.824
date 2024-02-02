@@ -3,7 +3,11 @@ package mr
 import "fmt"
 import "log"
 import "net/rpc"
+import "os"
+import "io/ioutil"
 import "hash/fnv"
+import "sort"
+import "encoding/json"
 
 
 //
@@ -13,6 +17,24 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+//
+//state const
+//
+const IDLE int = 0
+const INPROGRESS int = 1
+const COMPLETED int = 2
+const MAP int = 0
+const REDUCE int = 1
+
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -32,10 +54,15 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-
+	// workerLife := true
+	// workerState := IDLE
+	
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
-
+	//CallExample()
+	task, nReduce := ReqTask()
+	doMap(mapf, task, nReduce)
+	//TaskDone(id)
 }
 
 //
@@ -68,6 +95,44 @@ func CallExample() {
 }
 
 //
+// the worker calls for requesting a task.
+//
+func ReqTask() (*Task, int){
+	
+	args := StateArgs{}
+
+	args.State = IDLE
+
+	reply := StateReply{}
+	
+	task := Task{}
+
+	ok := call("Coordinator.ReqHandler", &args, &reply)
+	if ok {
+		fmt.Printf("Worker %v\n", reply.WorkerID)
+		fmt.Printf("Task id %v\n", reply.FileID)
+		fmt.Printf("task gotten %v %v\n", reply.Category, reply.File)
+	} else {
+		fmt.Printf("call failed!\n")
+	}
+
+	task.Category = reply.Category
+	task.File = reply.File
+	task.ID = reply.FileID
+	task.State = IDLE
+	return &task, reply.NReduce
+}
+
+//
+// signal the coordinator that the task is done
+//
+func TaskDone(id string)  {
+	
+
+}
+
+
+//
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
@@ -89,3 +154,37 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	fmt.Println(err)
 	return false
 }
+
+//
+// do map
+//
+func doMap(mapf func(string, string) []KeyValue, task *Task, nReduce int)  {
+	intermediate := []KeyValue{}
+	filename := task.File
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+	kva := mapf(filename, string(content))
+	intermediate = append(intermediate, kva...)
+	sort.Sort(ByKey(intermediate))
+	
+	for _, kv := range intermediate {
+		oname := fmt.Sprintf("mr-%v-%v", task.ID, ihash(kv.Key) % nReduce)
+		ofile, err := os.OpenFile(oname, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("cannot open %v", ofile)
+		}
+		enc := json.NewEncoder(ofile)
+		errj := enc.Encode(&kv)
+		if errj != nil {
+			log.Fatalf("encoding error!")
+		}
+	}
+}
+
