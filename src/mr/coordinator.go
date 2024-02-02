@@ -6,6 +6,7 @@ import "os"
 import "net/rpc"
 import "net/http"
 import "fmt"
+import "sync"
 
 
 type Coordinator struct {
@@ -35,6 +36,12 @@ type WorkerState struct {
 	TaskID int
 }
 
+//
+// lock
+//
+var mutex sync.Mutex
+
+
 // Your code here -- RPC handlers for the worker to call.
 
 //
@@ -49,15 +56,28 @@ func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
 
 func (c *Coordinator) ReqHandler(args *StateArgs, reply *StateReply) error {
 
+	var taskDone int = NEW
+	if args.WorkerID == NEW {
+		reply.WorkerID = c.Nonce
+		fmt.Println(c.Nonce)
+		c.Nonce += 1
+	} else {
+		reply.WorkerID = args.WorkerID
+		taskDone = args.TaskID
+	}
+	
 	reply.NReduce = c.NReduce
 	reply.Category = c.Tasks[0].Category // the category is decided by the first element of task table
-	task := c.TaskSche()
+	task := c.TaskSche(taskDone)
+	if task == nil {
+		fmt.Println("MAPDONE")
+		reply.File = ""
+		reply.FileID = NEW
+		return nil
+	}
 	fmt.Println(task.File)
 	reply.File = task.File
 	reply.FileID = task.ID
-	reply.WorkerID = c.Nonce
-	fmt.Println(c.Nonce)
-	c.Nonce += 1
 
 	return nil
 }
@@ -120,14 +140,21 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 //
 //choose an idle file
 //
-func (c *Coordinator) TaskSche() *Task {
+func (c *Coordinator) TaskSche(lastTask int) *Task {
+	mutex.Lock()
+	var task *Task = nil
+
+	if lastTask != NEW {
+		c.Tasks[lastTask].State = COMPLETED
+	}
 	for i :=0; i < len(c.Tasks); i++ {
-		task := &c.Tasks[i]
+		task = &c.Tasks[i]
 		if(task.State == IDLE){
 			task.State = INPROGRESS
-			return task
+			break
 		}
+		task = nil
 	}
-	
-	return nil
+	mutex.Unlock()
+	return task
 }

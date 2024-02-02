@@ -21,6 +21,7 @@ type KeyValue struct {
 //
 //state const
 //
+const NEW int = -1
 const IDLE int = 0
 const INPROGRESS int = 1
 const COMPLETED int = 2
@@ -54,15 +55,30 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
-	// workerLife := true
-	// workerState := IDLE
-	
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
-	//CallExample()
-	task, nReduce := ReqTask()
-	doMap(mapf, task, nReduce)
-	//TaskDone(id)
+	workerLife := true
+	workerState := IDLE
+	workerID := NEW
+	var currentTask *Task = nil
+
+	for workerLife {
+		// uncomment to send the Example RPC to the coordinator.
+		// CallExample()
+		if workerState == IDLE {
+			task, nReduce, tempID := ReqTask(currentTask, workerID)
+			workerID = tempID
+			currentTask = task
+			if currentTask.ID == NEW {
+				break
+			}
+			workerState = INPROGRESS
+			if task.Category == MAP {
+				doMap(mapf, task, nReduce)
+				task.State = COMPLETED
+			}
+			workerState = IDLE
+		}
+	}
+	fmt.Printf("Worker %v is dead\n", workerID)
 }
 
 //
@@ -97,11 +113,19 @@ func CallExample() {
 //
 // the worker calls for requesting a task.
 //
-func ReqTask() (*Task, int){
+func ReqTask(lastTask *Task, workerID int) (*Task, int,int ){
 	
 	args := StateArgs{}
 
-	args.State = IDLE
+	if lastTask == nil {
+		args.State = IDLE
+		args.WorkerID = NEW
+		//fmt.Println("null task") not null task
+	} else {
+		args.TaskID = lastTask.ID
+		args.State = COMPLETED
+		args.WorkerID = workerID
+	}
 
 	reply := StateReply{}
 	
@@ -120,17 +144,8 @@ func ReqTask() (*Task, int){
 	task.File = reply.File
 	task.ID = reply.FileID
 	task.State = IDLE
-	return &task, reply.NReduce
+	return &task, reply.NReduce, reply.WorkerID
 }
-
-//
-// signal the coordinator that the task is done
-//
-func TaskDone(id string)  {
-	
-
-}
-
 
 //
 // send an RPC request to the coordinator, wait for the response.

@@ -25,7 +25,8 @@ type ExampleReply struct {
 // Add your RPC definitions here.
 
 type StateArgs struct {
-	ID int
+	TaskID int
+	WorkerID int
 	State int
 }
 
