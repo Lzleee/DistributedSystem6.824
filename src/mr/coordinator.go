@@ -15,6 +15,7 @@ type Coordinator struct {
 	NReduce int
 	Tasks []Task
 	Workers []WorkerState
+	State int
 }
 
 //
@@ -67,14 +68,8 @@ func (c *Coordinator) ReqHandler(args *StateArgs, reply *StateReply) error {
 	}
 	
 	reply.NReduce = c.NReduce
-	reply.Category = c.Tasks[0].Category // the category is decided by the first element of task table
 	task := c.TaskSche(taskDone)
-	if task == nil {
-		fmt.Println("MAPDONE")
-		reply.File = ""
-		reply.FileID = NEW
-		return nil
-	}
+	reply.Category = c.Tasks[0].Category // the category is decided by the first element of task table
 	fmt.Println(task.File)
 	reply.File = task.File
 	reply.FileID = task.ID
@@ -107,7 +102,9 @@ func (c *Coordinator) Done() bool {
 	ret := false
 
 	// Your code here.
-
+	if c.State == COMPLETED {
+		ret = true
+	}
 
 	return ret
 }
@@ -122,6 +119,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 	// Your code here.
 	c.Nonce = 0
+	c.State = INPROGRESS
 	c.NReduce = nReduce
 	c.Tasks = []Task{}
 	for i, file := range files {
@@ -139,10 +137,14 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 
 //
 //choose an idle file
+// bug!!!: A thread terminates map tasks with an id, the the task mode changes. 
+// But the thread does not realise that the mode is change. 
+// It make the reduce task table dirty and the corresponding id is marked as COMPLETED.
 //
 func (c *Coordinator) TaskSche(lastTask int) *Task {
 	mutex.Lock()
 	var task *Task = nil
+	allDone := false
 
 	if lastTask != NEW {
 		c.Tasks[lastTask].State = COMPLETED
@@ -155,6 +157,62 @@ func (c *Coordinator) TaskSche(lastTask int) *Task {
 		}
 		task = nil
 	}
+	for i :=0; i < len(c.Tasks); i++ {
+		taskTep := &c.Tasks[i]
+		if(taskTep.State != COMPLETED){
+			break
+		}
+		if i == len(c.Tasks) - 1 {
+			allDone = true
+		}
+	}
+
+	if task == nil {
+		if allDone {
+			if c.Tasks[0].Category == MAP {
+				fmt.Println("MAPDONE")
+				c.changeMode()
+				for i :=0; i < len(c.Tasks); i++ {
+					task = &c.Tasks[i]
+					if(task.State == IDLE){
+						task.State = INPROGRESS
+						break
+					}
+					task = nil
+				}
+			}else {
+				fmt.Println("DONE")
+				c.State = COMPLETED
+				task = &Task{}
+				task.ID = NEW
+				task.File = ""
+				task.Category = REDUCE
+				task.State = COMPLETED
+			}
+		} else {
+			task = &Task{}
+			task.Category = MAP
+			task.File = ""
+			task.ID = NEW
+			task.State = IDLE
+		}
+	}
 	mutex.Unlock()
 	return task
+}
+
+//
+// change task mode
+//
+func (c *Coordinator) changeMode()  {
+	tasks := []Task{}
+	for i := 0; i < c.NReduce; i++ {
+		task := Task{}
+		task.Category = REDUCE
+		task.File = fmt.Sprintf("mr-*-%v", i)
+		task.State = IDLE
+		task.ID = i
+		tasks = append(tasks, task)
+	}
+	c.Tasks = tasks
 }

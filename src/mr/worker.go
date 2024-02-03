@@ -8,6 +8,7 @@ import "io/ioutil"
 import "hash/fnv"
 import "sort"
 import "encoding/json"
+import "path/filepath"
 
 
 //
@@ -68,11 +69,19 @@ func Worker(mapf func(string, string) []KeyValue,
 			workerID = tempID
 			currentTask = task
 			if currentTask.ID == NEW {
-				break
+				if currentTask.Category == MAP {
+					continue
+				} else {
+					break
+				}
 			}
 			workerState = INPROGRESS
 			if task.Category == MAP {
 				doMap(mapf, task, nReduce)
+				task.State = COMPLETED
+			}
+			if task.Category == REDUCE {
+				doReduce(reducef, task)
 				task.State = COMPLETED
 			}
 			workerState = IDLE
@@ -200,6 +209,57 @@ func doMap(mapf func(string, string) []KeyValue, task *Task, nReduce int)  {
 		if errj != nil {
 			log.Fatalf("encoding error!")
 		}
+		ofile.Close()
 	}
 }
 
+//
+// do reduce
+//
+func doReduce(reducef func(string, []string) string, task *Task)  {
+	path := task.File
+	files, err := filepath.Glob(path)
+	if err != nil {
+		log.Fatalf("cannot find %v", path)
+	}
+	oname := fmt.Sprintf("mr-out-%v", task.ID)
+	ofile, _ := os.Create(oname)
+
+	kva := []KeyValue{}
+	for _, filename := range files {
+		file, err := os.OpenFile(filename, os.O_RDWR|os.O_APPEND, 0666)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			kva = append(kva, kv)
+		}
+		file.Close()
+	}
+
+	sort.Sort(ByKey(kva))
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		output := reducef(kva[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, output)
+
+		i = j
+	}
+
+	ofile.Close()
+}
